@@ -2,6 +2,8 @@
 
 # Muse StopWatch
 
+[![CI](https://github.com/acrostm/muse-stopwatch/actions/workflows/ci.yml/badge.svg)](https://github.com/acrostm/muse-stopwatch/actions/workflows/ci.yml)
+
 A community adaptation of [Muse Gadget SDK](https://github.com/facebookincubator/muse-gadget-sdk) for **M5Stack StopWatch (ESP32-S3, 16 MB flash, 8 MB PSRAM)**. It adds a browser setup portal, Doubao Speech Generation 2.0 playback, named voice selection and preview, four device pages, and cancellable push-to-talk.
 
 This repository contains the adaptation and a patch against one pinned SDK revision, rather than a fork of every upstream device. It does not contain other AI Passport applications, private configuration, build outputs, or upstream avatar assets. It is independent of Meta and M5Stack.
@@ -76,9 +78,10 @@ On Linux replace the serial port with the detected `/dev/ttyACM*` port. Do not w
 ## Development and validation
 
 ```bash
-# Fetch the pinned upstream checkout or prepare a build first, then:
-export CJSON_SOURCE_DIR=/tmp/muse-stopwatch-sdk/esp32/managed_components/espressif__cjson/cJSON
-python3 tools/validate.py
+# Host tests do not require the ESP-IDF toolchain.
+python3 tools/fetch_test_deps.py /tmp/muse-stopwatch-cjson
+export CJSON_SOURCE_DIR=/tmp/muse-stopwatch-cjson
+CC=clang python3 tools/validate.py
 # Validate a completed firmware build as well:
 python3 tools/validate.py --firmware /tmp/muse-stopwatch-sdk/esp32/build-stopwatch
 ```
