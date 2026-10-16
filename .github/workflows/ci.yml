@@ -43,5 +43,6 @@ jobs:
         run: |
           . /opt/esp/idf/export.sh
           python build.py build --out /tmp/muse-stopwatch-sdk
+          CC=cc CXX=c++ python tools/test_ui.py /tmp/muse-stopwatch-sdk/esp32/managed_components/lvgl__lvgl
           python package.py create /tmp/muse-stopwatch-sdk/esp32/build-stopwatch --archive-root /tmp/verified
           python package.py verify /tmp/verified/*

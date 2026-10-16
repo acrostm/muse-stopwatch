@@ -2,6 +2,8 @@
 
 # Muse StopWatch
 
+[![CI](https://github.com/acrostm/muse-stopwatch/actions/workflows/ci.yml/badge.svg)](https://github.com/acrostm/muse-stopwatch/actions/workflows/ci.yml)
+
 面向 **M5Stack StopWatch（ESP32-S3、16 MB Flash、8 MB PSRAM）** 的 [Muse Gadget SDK](https://github.com/facebookincubator/muse-gadget-sdk) 社区适配。提供浏览器配网、豆包语音合成 2.0、音色名称选择与试听、四个设备页面和可取消的按住说话。
 
 仓库只包含适配代码、固定上游版本的补丁和构建工具，不包含其他 AI Passport 项目、私人配置、构建产物或上游头像素材。项目独立于 Meta 与 M5Stack。
@@ -76,12 +78,15 @@ Linux 换成实际 `/dev/ttyACM*`。不要把应用二进制刷到 0x0，不要�
 ## 开发与验证
 
 ```bash
-export CJSON_SOURCE_DIR=/tmp/muse-stopwatch-sdk/esp32/managed_components/espressif__cjson/cJSON
-python3 tools/validate.py
+# 主机测试无需 ESP-IDF 工具链。
+python3 tools/fetch_test_deps.py /tmp/muse-stopwatch-cjson
+export CJSON_SOURCE_DIR=/tmp/muse-stopwatch-cjson
+CC=clang python3 tools/validate.py
 python3 tools/validate.py --firmware /tmp/muse-stopwatch-sdk/esp32/build-stopwatch
+python3 tools/test_ui.py /tmp/muse-stopwatch-sdk/esp32/managed_components/lvgl__lvgl
 ```
 
-CI 在 Linux 与 macOS 执行主机测试，C 可执行测试开启 ASan/UBSan 并将警告视为错误，跳过测试不允许通过门禁。同时检查 JavaScript 语法、本地文档链接、中英文配对及补丁与源码对应关系。独立 ESP-IDF 6.0.1 任务在每个 PR 编译并核验固件；版本标签通过两项门禁后发布带校验值的**纯源码版本**。固件二进制和默认头像不重新分发，分享本地编译结果前需检查上游素材和依赖许可。
+CI 在 Linux 与 macOS 执行主机测试，C 可执行测试开启 ASan/UBSan 并将警告视为错误，跳过测试不允许通过门禁。同时检查 JavaScript 语法、本地文档链接、中英文配对及补丁与源码对应关系。独立 ESP-IDF 6.0.1 任务在每个 PR 编译并核验固件，同时用真实无屏幕 LVGL 检查初始化、渲染、滑动与四页循环；版本标签通过两项门禁后发布带校验值的**纯源码版本**。固件二进制和默认头像不重新分发，分享本地编译结果前需检查上游素材和依赖许可。
 
 纯状态／协议逻辑位于 `sw_core`、`sw_proxy_core`、`sw_sign`；网络和音频在工作任务运行，按键只更新状态或排队，LVGL 仅在其任务访问。详见[贡献指南](CONTRIBUTING.zh_CN.md)、[安全说明](SECURITY.zh_CN.md)和[架构与真机验收](docs/DEVELOPMENT.zh_CN.md)。
 

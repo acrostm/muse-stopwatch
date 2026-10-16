@@ -32,7 +32,8 @@ void sw_tts_set_status(const char *text);
 void sw_portal_request(void);
 void sw_portal_info(char *ssid, size_t ssid_cap, char *pass, size_t pass_cap, bool *on);
 /* UI build/tick only in the LVGL task or while holding the board display lock. */
-void sw_pages_build(lv_obj_t *tileview, lv_obj_t *settings);
+void sw_pages_build(lv_obj_t *tileview, lv_obj_t *face, lv_obj_t *settings);
+unsigned sw_pages_current(void);
 void sw_pages_tick(lv_obj_t *tileview);
 /* Thread safe: queues a page request, never calls LVGL. */
 void sw_pages_next(void);

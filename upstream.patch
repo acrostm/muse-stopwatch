@@ -67,6 +67,15 @@
  #include "muse_settings_ui.h"
  #include "muse_state.h"
  #include "muse_text.h"
+@@ -109,7 +110,7 @@
+     return s_face_active;
+ }
+ static lv_obj_t *s_settings;
+-static lv_obj_t *s_dots[2];
++static lv_obj_t *s_dots[4];
+ static lv_obj_t *s_wifi_icon;
+ static lv_obj_t *s_ble_icon;
+ static lv_obj_t *s_cover;
 @@ -867,7 +868,7 @@
           * shows as a different-coloured square around the character. */
          lv_obj_set_style_bg_color(s_face, lv_color_black(), 0);
@@ -76,6 +85,15 @@
          lv_obj_add_event_cb(s_tv, tile_changed_cb, LV_EVENT_VALUE_CHANGED, NULL);
          face = s_face;
      }
+@@ -1108,7 +1109,7 @@
+ {
+     if (!s_ptt_hint) return;
+     /* Don't obscure settings rows/keyboards with floating physical icons. */
+-    bool settings = s_tv && lv_tileview_get_tile_active(s_tv) == s_settings;
++    bool settings = s_tv && lv_tileview_get_tile_active(s_tv) != s_face;
+     lv_obj_set_flag(s_ptt_hint, LV_OBJ_FLAG_HIDDEN, settings);
+     lv_obj_set_flag(s_spk_hint, LV_OBJ_FLAG_HIDDEN, settings);
+     lv_obj_set_flag(s_pwr_hint, LV_OBJ_FLAG_HIDDEN, settings);
 @@ -1118,7 +1119,7 @@
          last_mode = (int)mode;
      }
@@ -85,6 +103,24 @@
      if (strcmp(speaker, lv_label_get_text(s_spk_hint))) {
          lv_label_set_text(s_spk_hint, speaker);
          lv_obj_set_style_text_color(s_spk_hint, lv_color_hex(speaker_on ? 0xffd060 : 0x8b7845), 0);
+@@ -1130,7 +1131,7 @@
+     lv_obj_t *scr = lv_screen_active();
+ 
+     /* Page dots. */
+-    for (int i = 0; i < 2 && s_tv; i++) {
++    for (int i = 0; i < 4 && s_tv; i++) {
+         lv_obj_t *d = lv_obj_create(scr);
+         lv_obj_remove_style_all(d);
+         lv_obj_set_size(d, 8, 8);
+@@ -1138,7 +1139,7 @@
+         lv_obj_set_style_bg_opa(d, LV_OPA_COVER, 0);
+         lv_obj_set_style_bg_color(d, lv_color_hex(COLOR_DOT_OFF), 0);
+         lv_obj_remove_flag(d, LV_OBJ_FLAG_CLICKABLE);
+-        lv_obj_align(d, LV_ALIGN_BOTTOM_MID, i ? 8 : -8, -14);
++        lv_obj_align(d, LV_ALIGN_BOTTOM_MID, i * 16 - 24, -14);
+         s_dots[i] = d;
+     }
+ 
 @@ -1168,7 +1169,7 @@
          /* Dedicated ownership: legacy chrome/reply hides must never claim it. */
          s_ptt_hint = make_mic(scr, 26);
@@ -94,16 +130,24 @@
          s_pwr_hint = make_control_icon(scr, &muse_board->power_hint, LV_SYMBOL_POWER, 0xff8080);
          update_control_hints(MUSE_MODE_BOOT);
      }
-@@ -1294,7 +1295,7 @@
+@@ -1293,21 +1294,21 @@
+     s_next_settings_tick = now + SETTINGS_TICK_S;
  
      if (s_tv) {
-         int page = lv_tileview_get_tile_active(s_tv) == s_settings;
+-        int page = lv_tileview_get_tile_active(s_tv) == s_settings;
 -        bool subpage = muse_settings_ui_in_subpage();
++        int page = (int)sw_pages_current();
 +        bool subpage = false;
          bool swipe = !page || !subpage;
          if (swipe != lv_obj_has_flag(s_tv, LV_OBJ_FLAG_SCROLLABLE)) {
              lv_obj_set_flag(s_tv, LV_OBJ_FLAG_SCROLLABLE, swipe);
-@@ -1307,7 +1308,7 @@
+         }
+         int shown = page * 2 + subpage;
+         if (shown != s_shown_page) {
+-            for (int i = 0; i < 2; i++) {
++            for (int i = 0; i < 4; i++) {
+                 lv_obj_set_style_bg_color(s_dots[i], lv_color_hex(i == page ? COLOR_ACCENT : COLOR_DOT_OFF), 0);
+                 lv_obj_set_flag(s_dots[i], LV_OBJ_FLAG_HIDDEN, page && subpage);
              }
              s_shown_page = shown;
          }
@@ -125,7 +169,7 @@
      build_screen();
      if (s_settings) {
 -        muse_settings_ui_build(s_settings);
-+        sw_pages_build(s_tv, s_settings);
++        sw_pages_build(s_tv, s_face, s_settings);
      } else {
          muse_menu_build(lv_screen_active(), s_w, s_h);
      }
