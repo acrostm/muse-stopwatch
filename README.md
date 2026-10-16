@@ -82,11 +82,12 @@ On Linux replace the serial port with the detected `/dev/ttyACM*` port. Do not w
 python3 tools/fetch_test_deps.py /tmp/muse-stopwatch-cjson
 export CJSON_SOURCE_DIR=/tmp/muse-stopwatch-cjson
 CC=clang python3 tools/validate.py
-# Validate a completed firmware build as well:
+# Validate a completed firmware build and its actual LVGL integration:
 python3 tools/validate.py --firmware /tmp/muse-stopwatch-sdk/esp32/build-stopwatch
+python3 tools/test_ui.py /tmp/muse-stopwatch-sdk/esp32/managed_components/lvgl__lvgl
 ```
 
-CI runs host tests on Linux and macOS with warnings as errors and ASan/UBSan for the executable C harnesses; no skipped tests pass the gate. It also checks JavaScript syntax, local documentation links, bilingual document pairing, and patch/source alignment. A separate ESP-IDF 6.0.1 job builds and verifies firmware on every pull request. Version tags run both gates before publishing a **source-only** release with checksums. Firmware binaries and the default avatar are not redistributed; review upstream asset and dependency licenses before sharing local builds.
+CI runs host tests on Linux and macOS with warnings as errors and ASan/UBSan for the executable C harnesses; no skipped tests pass the gate. It also checks JavaScript syntax, local documentation links, bilingual document pairing, and patch/source alignment. A separate ESP-IDF 6.0.1 job builds and verifies firmware and runs real headless LVGL startup, rendering, swipe, and four-page cycling tests on every pull request. Version tags run both gates before publishing a **source-only** release with checksums. Firmware binaries and the default avatar are not redistributed; review upstream asset and dependency licenses before sharing local builds.
 
 Pure state/protocol logic lives in `sw_core`, `sw_proxy_core`, and `sw_sign`; ESP-IDF workers own network/audio operations. Button callbacks only update state or queue work. LVGL access stays in its task. See [contributing](CONTRIBUTING.md), [security](SECURITY.md), and [architecture / test handoff](docs/DEVELOPMENT.md).
 

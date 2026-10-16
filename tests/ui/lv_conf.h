@@ -1,0 +1,14 @@
+#pragma once
+#define LV_COLOR_DEPTH 16
+#define LV_USE_STDLIB_MALLOC LV_STDLIB_CLIB
+#define LV_USE_OS LV_OS_NONE
+#define LV_USE_LOG 0
+#define LV_USE_ASSERT_NULL 1
+#define LV_USE_ASSERT_OBJ 1
+#define LV_USE_ASSERT_MALLOC 1
+#define LV_ASSERT_HANDLER_INCLUDE <assert.h>
+#define LV_ASSERT_HANDLER assert(0);
+#define LV_FONT_MONTSERRAT_16 1
+#define LV_USE_SNAPSHOT 0
+#define LV_BUILD_EXAMPLES 0
+#define LV_USE_DEMO_WIDGETS 0

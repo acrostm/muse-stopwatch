@@ -136,7 +136,7 @@
      if (s_tv) {
 -        int page = lv_tileview_get_tile_active(s_tv) == s_settings;
 -        bool subpage = muse_settings_ui_in_subpage();
-+        int page = (int)lv_obj_get_index(lv_tileview_get_tile_active(s_tv));
++        int page = (int)sw_pages_current();
 +        bool subpage = false;
          bool swipe = !page || !subpage;
          if (swipe != lv_obj_has_flag(s_tv, LV_OBJ_FLAG_SCROLLABLE)) {
@@ -169,7 +169,7 @@
      build_screen();
      if (s_settings) {
 -        muse_settings_ui_build(s_settings);
-+        sw_pages_build(s_tv, s_settings);
++        sw_pages_build(s_tv, s_face, s_settings);
      } else {
          muse_menu_build(lv_screen_active(), s_w, s_h);
      }

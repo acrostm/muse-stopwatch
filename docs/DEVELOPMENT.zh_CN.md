@@ -8,7 +8,7 @@
 
 `sw_runtime` 同步配置与历史；`sw_portal` 提供热点页面并将慢操作交给工作任务；`sw_voice` 处理音色发现与有界试听；`sw_tts` 处理服务端流、PCM 与代际取消；`sw_proxy_core` 构造有界 SOCKS5 请求，`sw_proxy` 包装限定域名的 DNS/connect；`sw_pages` 在 UI 任务维护 LVGL。开发板、麦克风、编解码器、头像、Muse 配对和云会话仍由上游负责。
 
-主机测试通过 ASan/UBSan 执行真实 C 实现，覆盖时长边界、UTF-8／历史边界、分片语音流、取消、与 Python HMAC 对照的签名、分片 SOCKS5 网络及产物篡改检测。SDK 集成和外围硬件仍需构建与真机验证，主机桩无法证明这些行为。
+主机测试通过 ASan/UBSan 执行真实 C 实现，覆盖时长边界、UTF-8／历史边界、分片语音流、取消、与 Python HMAC 对照的签名、分片 SOCKS5 网络及产物篡改检测。固件任务还会执行 `tools/test_ui.py`，在 ASan/UBSan 下使用 SDK 的真实 LVGL，覆盖当前页初始为空、显式初始化首页、渲染、连续二十次切页、滑动和合并导航请求。仅平台调用使用桩，字体夹具用 Montserrat，因此不能证明实际按键、中文字形和板级外设，这些仍需真机检查。
 
 ## 真机检查
 
