@@ -61,5 +61,12 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('port'); parser.add_argument('--page', type=int, choices=(1,2,3), required=True)
     parser.add_argument('--out', type=Path, required=True)
-    args = parser.parse_args(); args.out.write_bytes(png(*capture(args.port,args.page)))
+    args = parser.parse_args()
+    for attempt in range(3):
+        try:
+            frame = capture(args.port, args.page)
+            break
+        except (ValueError, TimeoutError):
+            if attempt == 2: raise
+    args.out.write_bytes(png(*frame))
     print('Saved sample UI capture:', args.out)

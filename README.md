@@ -2,6 +2,8 @@
 
 # Muse StopWatch
 
+[![CI](https://github.com/acrostm/muse-stopwatch/actions/workflows/ci.yml/badge.svg)](https://github.com/acrostm/muse-stopwatch/actions/workflows/ci.yml)
+
 A community adaptation of [Muse Gadget SDK](https://github.com/facebookincubator/muse-gadget-sdk) for **M5Stack StopWatch (ESP32-S3, 16 MB flash, 8 MB PSRAM)**. It adds a browser setup portal, Doubao Speech Generation 2.0 playback, named voice selection and preview, four device pages, and cancellable push-to-talk.
 
 This repository contains the adaptation and a patch against one pinned SDK revision, rather than a fork of every upstream device. It does not contain other AI Passport applications, private configuration, build outputs, or upstream avatar assets. It is independent of Meta and M5Stack.
@@ -76,14 +78,16 @@ On Linux replace the serial port with the detected `/dev/ttyACM*` port. Do not w
 ## Development and validation
 
 ```bash
-# Fetch the pinned upstream checkout or prepare a build first, then:
-export CJSON_SOURCE_DIR=/tmp/muse-stopwatch-sdk/esp32/managed_components/espressif__cjson/cJSON
-python3 tools/validate.py
-# Validate a completed firmware build as well:
+# Host tests do not require the ESP-IDF toolchain.
+python3 tools/fetch_test_deps.py /tmp/muse-stopwatch-cjson
+export CJSON_SOURCE_DIR=/tmp/muse-stopwatch-cjson
+CC=clang python3 tools/validate.py
+# Validate a completed firmware build and its actual LVGL integration:
 python3 tools/validate.py --firmware /tmp/muse-stopwatch-sdk/esp32/build-stopwatch
+python3 tools/test_ui.py /tmp/muse-stopwatch-sdk/esp32/managed_components/lvgl__lvgl
 ```
 
-CI runs host tests on Linux and macOS with warnings as errors and ASan/UBSan for the executable C harnesses; no skipped tests pass the gate. It also checks JavaScript syntax, local documentation links, bilingual document pairing, and patch/source alignment. A separate ESP-IDF 6.0.1 job builds and verifies firmware on every pull request. Version tags run both gates before publishing a **source-only** release with checksums. Firmware binaries and the default avatar are not redistributed; review upstream asset and dependency licenses before sharing local builds.
+CI runs host tests on Linux and macOS with warnings as errors and ASan/UBSan for the executable C harnesses; no skipped tests pass the gate. It also checks JavaScript syntax, local documentation links, bilingual document pairing, and patch/source alignment. A separate ESP-IDF 6.0.1 job builds and verifies firmware and runs real headless LVGL startup, rendering, swipe, and four-page cycling tests on every pull request. Version tags run both gates before publishing a **source-only** release with checksums. Firmware binaries and the default avatar are not redistributed; review upstream asset and dependency licenses before sharing local builds.
 
 Pure state/protocol logic lives in `sw_core`, `sw_proxy_core`, and `sw_sign`; ESP-IDF workers own network/audio operations. Button callbacks only update state or queue work. LVGL access stays in its task. See [contributing](CONTRIBUTING.md), [security](SECURITY.md), and [architecture / test handoff](docs/DEVELOPMENT.md).
 
