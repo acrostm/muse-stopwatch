@@ -1,0 +1,16 @@
+Muse StopWatch adapter
+Copyright 2026 Muse StopWatch contributors
+
+This project modifies Muse Gadget SDK by Meta Platforms, Inc. and affiliates.
+Upstream: https://github.com/facebookincubator/muse-gadget-sdk
+Pinned revision: fa073045a5572a8e3367fae142c1b7a7c554f222
+Modified upstream source is distributed as upstream.patch with original notices.
+
+Our adapter source and patches are available under Apache-2.0.
+The upstream Jollybot avatar is expressly excluded from upstream Apache licensing.
+No avatar source, avatar image, upstream SDK tree, or firmware binary is included
+in this repository or source releases. Local builds fetch upstream assets;
+consult upstream terms before redistributing resulting binaries or avatar art.
+Dependencies retain their own licenses, including ESP-IDF components, LVGL,
+minimp3 (CC0-1.0), and GNU Unifont (GPL-2.0-or-later WITH Font-exception-2.0).
+This is an independent community adaptation, not an official Meta or M5Stack product.

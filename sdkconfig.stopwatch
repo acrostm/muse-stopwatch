@@ -1,0 +1,20 @@
+# Applied after the upstream common Muse and StopWatch profiles.
+CONFIG_MUSE_CJK_FONT=y
+CONFIG_MUSE_STATIC_BUFFERS_IN_PSRAM=y
+# Route both diagnostics and the command console over the native USB port.
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
+CONFIG_LV_USE_FONT_PLACEHOLDER=y
+CONFIG_HOMEHUB_OTA_ENABLED=n
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.stopwatch.csv"
+CONFIG_PARTITION_TABLE_OFFSET=0x8000
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=n
+# The device is a voice peripheral; don't expose unrelated LAN/BLE commands.
+CONFIG_HOMEHUB_TUNNEL=n
+CONFIG_HOMEHUB_BLE_COMMANDS=n
+# No SDK token or API credential is compiled into the image.
+CONFIG_GADGET_SDK_TOKEN=""
+# Local builds can be flashed without committing a development signing key.
+CONFIG_SECURE_SIGNED_APPS_NO_SECURE_BOOT=n
+CONFIG_SECURE_SIGNED_ON_UPDATE_NO_SECURE_BOOT=n
+CONFIG_SECURE_BOOT_BUILD_SIGNED_BINARIES=n

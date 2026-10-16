@@ -1,0 +1,456 @@
+--- a/esp32/components/muse/muse_app.c
++++ b/esp32/components/muse/muse_app.c
+@@ -27,6 +27,7 @@
+ #include "muse_chat.h"
+ #include "muse_input.h"
+ #include "muse_settings.h"
++#include "sw_runtime.h"
+ #include "muse_state.h"
+ #include "muse_ui.h"
+ #include "muse_voice.h"
+@@ -68,6 +69,7 @@
+     ESP_ERROR_CHECK(muse_settings_init());
+     muse_settings_set_listener(on_setting);
+     muse_state_init();
++    ESP_ERROR_CHECK(sw_runtime_start());
+     muse_battery_init();
+     muse_state_set_caption("WAKING UP...");
+     ESP_ERROR_CHECK(muse_ui_start());
+--- a/esp32/components/muse/muse_input.c
++++ b/esp32/components/muse/muse_input.c
+@@ -41,6 +41,7 @@
+ #include "muse_mem.h"
+ #include "muse_menu.h"
+ #include "muse_settings.h"
++#include "sw_runtime.h"
+ #include "muse_state.h"
+ #include "muse_ui.h"
+ #include "muse_voice.h"
+@@ -91,6 +92,8 @@
+ 
+ static void post(muse_ptt_t type, bool wake)
+ {
++    if (type == MUSE_PTT_DOWN) sw_capture_press();
++    else sw_capture_release();
+     muse_input_event_t ev = { .type = type, .wake = wake };
+     ESP_LOGI(TAG, "PTT %s%s", type == MUSE_PTT_DOWN ? "down" : "up", wake ? " (waking)" : "");
+     xQueueSend(s_queue, &ev, 0);
+@@ -507,11 +510,8 @@
+         if (muse_state_asleep()) {
+             set_asleep(false, muse_board->speaker_button);   /* wake-only press */
+         } else if (muse_state_mode(NULL) != MUSE_MODE_OFF) {
+-            bool on = !muse_settings_speaker_on();
+-            muse_settings_set_speaker_on(on);
+-            if (muse_state_mode(NULL) == MUSE_MODE_IDLE) {
+-                muse_state_set_caption(on ? "SPEAKER ON" : "SPEAKER OFF");
+-            }
++            if (s_talk_down) sw_capture_cancel();
++            else sw_pages_next();
+         }
+     }
+ }
+@@ -698,6 +698,7 @@
+  */
+ static bool console_command(char *line, bool whole)
+ {
++    if (whole && sw_console_command(line)) return true;
+     if (whole && s_console_hook && s_console_hook(line)) {
+         return true;
+     }
+--- a/esp32/components/muse/muse_ui.c
++++ b/esp32/components/muse/muse_ui.c
+@@ -41,6 +41,7 @@
+ #include "muse_menu.h"
+ #include "muse_pixel.h"
+ #include "muse_settings.h"
++#include "sw_runtime.h"
+ #include "muse_settings_ui.h"
+ #include "muse_state.h"
+ #include "muse_text.h"
+@@ -867,7 +868,7 @@
+          * shows as a different-coloured square around the character. */
+         lv_obj_set_style_bg_color(s_face, lv_color_black(), 0);
+         lv_obj_set_style_bg_opa(s_face, LV_OPA_COVER, 0);
+-        s_settings = lv_tileview_add_tile(s_tv, 1, 0, LV_DIR_LEFT);
++        s_settings = lv_tileview_add_tile(s_tv, 1, 0, LV_DIR_HOR);
+         lv_obj_add_event_cb(s_tv, tile_changed_cb, LV_EVENT_VALUE_CHANGED, NULL);
+         face = s_face;
+     }
+@@ -1118,7 +1119,7 @@
+         last_mode = (int)mode;
+     }
+     bool speaker_on = muse_settings_speaker_on();
+-    const char *speaker = speaker_on ? LV_SYMBOL_VOLUME_MID : LV_SYMBOL_MUTE;
++    const char *speaker = LV_SYMBOL_LIST; /* yellow key cycles pages */
+     if (strcmp(speaker, lv_label_get_text(s_spk_hint))) {
+         lv_label_set_text(s_spk_hint, speaker);
+         lv_obj_set_style_text_color(s_spk_hint, lv_color_hex(speaker_on ? 0xffd060 : 0x8b7845), 0);
+@@ -1168,7 +1169,7 @@
+         /* Dedicated ownership: legacy chrome/reply hides must never claim it. */
+         s_ptt_hint = make_mic(scr, 26);
+         lv_obj_align(s_ptt_hint, muse_board->talk_hint.align, muse_board->talk_hint.x, muse_board->talk_hint.y);
+-        s_spk_hint = make_control_icon(scr, &muse_board->speaker_hint, LV_SYMBOL_VOLUME_MID, 0xffd060);
++        s_spk_hint = make_control_icon(scr, &muse_board->speaker_hint, LV_SYMBOL_LIST, 0xffd060);
+         s_pwr_hint = make_control_icon(scr, &muse_board->power_hint, LV_SYMBOL_POWER, 0xff8080);
+         update_control_hints(MUSE_MODE_BOOT);
+     }
+@@ -1294,7 +1295,7 @@
+ 
+     if (s_tv) {
+         int page = lv_tileview_get_tile_active(s_tv) == s_settings;
+-        bool subpage = muse_settings_ui_in_subpage();
++        bool subpage = false;
+         bool swipe = !page || !subpage;
+         if (swipe != lv_obj_has_flag(s_tv, LV_OBJ_FLAG_SCROLLABLE)) {
+             lv_obj_set_flag(s_tv, LV_OBJ_FLAG_SCROLLABLE, swipe);
+@@ -1307,7 +1308,7 @@
+             }
+             s_shown_page = shown;
+         }
+-        muse_settings_ui_tick(lv_obj_get_scroll_x(s_tv) > 0);
++        /* Standalone pages are updated by sw_pages_tick. */
+     }
+ 
+     /* Joining, the icon blinks: the compact layout has no state label. */
+@@ -1598,6 +1599,7 @@
+ 
+ static void frame_tick(lv_timer_t *timer)
+ {
++    if (s_tv) sw_pages_tick(s_tv);
+ #if LV_USE_SNAPSHOT
+     if (s_bench_page >= 0) {
+         bool settings = s_bench_page != 0;
+@@ -1699,7 +1701,7 @@
+     muse_board->display_lock(-1);
+     build_screen();
+     if (s_settings) {
+-        muse_settings_ui_build(s_settings);
++        sw_pages_build(s_tv, s_settings);
+     } else {
+         muse_menu_build(lv_screen_active(), s_w, s_h);
+     }
+--- a/esp32/components/muse/muse_chat_session.cpp
++++ b/esp32/components/muse/muse_chat_session.cpp
+@@ -69,6 +69,7 @@
+ #include "muse_account_api.h"
+ #include "muse_link.h"
+ #include "muse_settings.h"
++#include "sw_runtime.h"
+ #include "muse_wifi.h"
+ }
+ #include "muse_chat_priv.h"
+@@ -960,6 +961,7 @@
+ 
+ static void turn_finish(void)
+ {
++    sw_tts_cancel();
+     turn_reset_streams();
+     s_turn.phase = P_IDLE;
+     s_turn.dict_id = s_turn.chat_id = 0;
+@@ -1397,7 +1399,13 @@
+     if (!m.len && final_text && final_text[0]) {
+         append_text(m, final_text);
+     }
++    if (s_turn.texts) {
++        char *full = s_turn.texts + i * TEXT_MAX;
++        /* Recover a complete UTF-8 prefix even when streamed text hit its cap. */
++        sw_text_copy(full, TEXT_MAX, final_text && *final_text ? final_text : full);
++    }
+     if (m.len && m.tts == TTS_NONE) {
++        if (s_turn.texts) sw_history_record(true, s_turn.texts + i * TEXT_MAX);
+         m.tts = TTS_QUEUED;
+     }
+     ESP_LOGI(TAG, "message %s done (%u chars)", m.id, (unsigned)m.len);
+@@ -1537,7 +1545,9 @@
+         m.pcm_frames = (uint32_t)(m.len * MIC_RATE / TEXT_CHARS_PER_S);
+         m.tts = TTS_ACTIVE;
+         s_turn.tts_msg = i;
+-        s_turn.silent = true;
++        s_turn.silent = !(muse_settings_speaker_on() && s_turn.texts &&
++            sw_tts_start(s_turn.texts + i * TEXT_MAX));
++        if (!s_turn.silent) m.pcm_frames = 0;
+         ESP_LOGI(TAG, "showing message %s (%u chars)", m.id, (unsigned)m.len);
+         show_reply_start(m);
+         return;
+@@ -1596,6 +1606,39 @@
+     }
+     if (s_turn.silent) {
+         pace_silently();
++        return;
++    }
++    /* The TTS worker owns its TLS client; this session remains responsive to
++     * Muse events, heartbeats and cancellation. Copy only what fits. */
++    if (!muse_settings_speaker_on()) {
++        sw_tts_cancel();
++        s_turn.silent = true;
++        msg_t &m = s_turn.msgs[s_turn.tts_msg];
++        m.pcm_start = s_turn.pcm_out;
++        m.pcm_frames = (uint32_t)(m.len * MIC_RATE / TEXT_CHARS_PER_S);
++        return;
++    }
++    {
++        uint8_t pcm[1024];
++        size_t room = xStreamBufferSpacesAvailable(s_out);
++        size_t n = sw_tts_read(pcm, room < sizeof(pcm) ? room : sizeof(pcm));
++        if (n && s_turn.gen == s_gen.load()) {
++            xStreamBufferSend(s_out, pcm, n, 0);
++            s_turn.pcm_out += n / sizeof(int16_t);
++            mark(M_AUDIO);
++        }
++        msg_t &m = s_turn.msgs[s_turn.tts_msg];
++        if (sw_tts_done()) {
++            if (s_turn.pcm_out == m.pcm_start) {
++                /* Failed before audio: keep the answer visible at reading pace. */
++                m.pcm_frames = (uint32_t)(m.len * MIC_RATE / TEXT_CHARS_PER_S);
++                s_turn.silent = true;
++            } else {
++                m.pcm_frames = s_turn.pcm_out - m.pcm_start;
++                m.tts = TTS_FINISHED;
++                s_turn.tts_msg = -1;
++            }
++        }
+         return;
+     }
+     /*
+@@ -2116,6 +2159,7 @@
+ 
+ extern "C" void muse_hatch_turn_end(void)
+ {
++    sw_history_record(false, "[Voice message]");
+     post(CMD_END, s_gen.load());
+ }
+ 
+@@ -2216,7 +2260,7 @@
+         return 0;
+     }
+     mp3dec_init(dec);
+-    resampler_t rs;
++    resampler_t rs{};
+     int rate = 0, frames = 0;
+     size_t off = 0, n = 0;
+     int64_t t0 = now_us();
+--- a/esp32/components/muse/CMakeLists.txt
++++ b/esp32/components/muse/CMakeLists.txt
+@@ -23,6 +23,7 @@
+ set(embed)
+ if(CONFIG_MUSE_ENABLED)
+     list(APPEND srcs
++        "sw_proxy_core.c" "sw_proxy.c" "sw_sign.c" "sw_voice.c" "sw_core.c" "sw_runtime.c" "sw_tts.c" "sw_portal.c" "sw_pages.c"
+         "muse_app.c"
+         "muse_board.c"
+         "muse_console.c"
+@@ -48,6 +49,7 @@
+     else()
+         list(APPEND srcs "muse_chat_link.c")   # text replies over Link's session
+     endif()
++    list(APPEND embed "sw_portal.html")
+     list(APPEND srcs "muse_chat_text.c")
+     if(CONFIG_MUSE_CJK_FONT)
+         list(APPEND srcs "fonts/muse_font_cjk_16.c")   # captions' CJK fallback
+@@ -124,7 +126,7 @@
+ set(muse_priv_requires
+     esp_timer esp_driver_usb_serial_jtag esp_psram nvs_flash esp_pm esp_event esp_netif
+     bt esp-tls mbedtls esp_app_format esp_http_client
+-    noise_core minimp3
++    noise_core minimp3 esp_http_server
+     esp_lcd esp_adc esp_driver_i2s esp_driver_ledc esp_driver_spi esp_driver_uart esp_wifi
+     esp_driver_pcnt)
+ list(APPEND muse_priv_requires camera)
+@@ -148,3 +150,7 @@
+         "LV_ASSERT_HANDLER_INCLUDE=<stdlib.h>"
+         "LV_ASSERT_HANDLER=abort()\;")
+ endif()
++
++if(CONFIG_MUSE_ENABLED)
++    target_link_options(${COMPONENT_LIB} INTERFACE "-Wl,--wrap=lwip_getaddrinfo" "-Wl,--wrap=lwip_connect")
++endif()
+--- a/esp32/main/muse_glue.c
++++ b/esp32/main/muse_glue.c
+@@ -15,6 +15,8 @@
+  */
+ 
+ #include "muse_glue.h"
++#include "sw_core.h"
++#include "link_pairing.h"
+ 
+ #include <stdlib.h>
+ #include <string.h>
+@@ -698,3 +700,20 @@
+     // Pairing, provisioning and unpair all move the LED; pick up their config.
+     keeper_kick(KEEP_RELOAD);
+ }
++
++/* Only one setup GATT client fits on this board. A client that connects but
++ * never starts the encrypted pairing handshake must not hide it indefinitely. */
++void sw_pairing_tick(bool restart)
++{
++    static sw_pairing_idle_t idle;
++    bool paired = config_setup_complete();
++    bool connected = ble_server_has_connection();
++    bool handshake = link_pairing_session_generation() != 0;
++    bool expired = sw_pairing_idle_expired(&idle, esp_timer_get_time(), connected, handshake, paired);
++    if (paired || (!restart && !expired)) return;
++    ESP_LOGI(TAG, "releasing idle setup connection: %s", restart ? "user request" : "no handshake for 30s");
++    ble_server_disconnect_client();
++    ble_server_begin_advertising();
++}
++
++bool sw_pairing_connected(void) { return ble_server_has_connection(); }
+--- a/esp32/components/muse/muse_voice.c
++++ b/esp32/components/muse/muse_voice.c
+@@ -15,6 +15,7 @@
+  */
+ 
+ #include "muse_voice.h"
++#include "sw_runtime.h"
+ 
+ #include <math.h>
+ #include <stdio.h>
+@@ -227,38 +228,23 @@
+ static void take(rec_stats_t *st, const int16_t *pcm)
+ {
+     keep(st, pcm, MUSE_AUDIO_CHUNK);
+-    if (!s_rec) {
+-        if (s_live) {
+-            muse_hatch_turn_audio(pcm, MUSE_AUDIO_CHUNK);
+-        }
+-        return;
+-    }
++    if (!s_rec) return; /* Allocation failure must never fall back to upload. */
+     memcpy(s_rec + s_rec_n, pcm, MUSE_AUDIO_CHUNK * sizeof(int16_t));
+     s_rec_n += MUSE_AUDIO_CHUNK;
+     feed_live();
+ }
+ 
+-/*
+- * Records speech until release or MAX_SECS, starting with the pre-roll; *held
+- * gets the part after the press. It streams to Hatch as it goes if it can.
+- * If not, the note is kept in s_rec to send later, and streams from partway
+- * if Hatch comes within reach. Returns false if Hatch failed the turn with no
+- * kept note to fall back on (why says what failed). There is no start chirp:
+- * anything played now would land on top of the first words.
+- */
++/* Records locally until release, cancellation, audio failure, or the 15s cap.
++ * Never begins a network turn here. The caller validates physical duration. */
+ static bool record(bool barge_in, size_t *held, char *why, size_t cap)
+ {
+     muse_state_set_mode(MUSE_MODE_LISTENING);
+     muse_state_set_progress(0);
+     s_rec_n = s_sent = 0;
+     s_live = s_tried = false;
+-    if (!s_rec || (muse_hatch_ready() && !s_held_count)) {
+-        go_live();
+-    }
+-    muse_state_set_caption(s_live ? "LISTENING..." : "RECORDING...");
+-    bool heard = false, ok = true;
+-    bool gave_up = false;   /* Hatch failed this note: it's kept, and goes later */
+-    char text[96];
++    /* Capture stays local until an explicit release passes the duration guard. */
++    muse_state_set_caption("RECORDING - LEFT TO CANCEL");
++    bool ok = true;
+     rec_stats_t st = { 0 };
+ 
+     size_t n = 0;
+@@ -279,39 +265,21 @@
+     size_t stop_at = MAX_FRAMES;
+     while (n + MUSE_AUDIO_CHUNK <= stop_at) {
+         if (muse_audio_read(s_chunk, MUSE_AUDIO_CHUNK) != ESP_OK) {
++            ok = false;
++            strlcpy(why, "AUDIO ERROR - RETRY", cap);
+             break;
+         }
+         muse_state_set_level(muse_audio_level(s_chunk, MUSE_AUDIO_CHUNK));
+         take(&st, s_chunk);
+-        /* Live transcript as the caption. A failure stops the streaming; the
+-         * kept note goes later, or without one the failure is the caption. */
+-        muse_hatch_ev_t ev;
+-        while (s_live && (ev = muse_hatch_turn_event(text, sizeof(text))) != MUSE_HATCH_EV_NONE) {
+-            if (ev == MUSE_HATCH_EV_HEARD && text[0]) {
+-                heard = true;
+-                muse_state_set_caption("%s", text);
+-            } else if (ev == MUSE_HATCH_EV_ERROR) {
+-                ESP_LOGW(TAG, "muse: %s", text);
+-                muse_hatch_turn_cancel();
+-                s_live = false;
+-                gave_up = true;
+-                if (!s_rec) {
+-                    ok = false;
+-                    strlcpy(why, text, cap);
+-                    muse_state_set_caption("%s", text);
+-                }
+-            }
+-        }
+         n += MUSE_AUDIO_CHUNK;
+-        bool tick = n % (MUSE_AUDIO_CHUNK * 5) == 0;
+-        if (tick && s_rec && !s_live && !gave_up && !s_held_count && muse_hatch_ready()) {
+-            ESP_LOGI(TAG, "Muse in reach: streaming the note so far");
+-            go_live();
++        if (sw_capture_result() == SW_PTT_CANCELLED) {
++            ok = false;
++            strlcpy(why, "CANCELLED - RELEASE TO RETRY", cap);
++            break;
+         }
+         muse_state_set_progress((float)n / MAX_FRAMES);
+-        if (!heard && ok && tick) {
+-            muse_state_set_caption("%s %.1fs", s_live ? "LISTENING" : "RECORDING", (double)n / MUSE_AUDIO_RATE);
+-        }
++        if (n % (MUSE_AUDIO_CHUNK * 5) == 0)
++            muse_state_set_caption("REC %.1fs - LEFT CANCEL", (double)n / MUSE_AUDIO_RATE);
+         /*
+          * Capture runs 60-80 ms behind real time and people let go on their
+          * last syllable, so keep going briefly after release.
+@@ -323,6 +291,10 @@
+     }
+     muse_state_set_level(0);
+     *held = n - pre;
++    if (!released && ok) {
++        ok = false;
++        strlcpy(why, "LIMIT OR AUDIO ERROR - RETRY", cap);
++    }
+ 
+     char tail[160];
+     int tl = 0;
+@@ -718,6 +690,7 @@
+     bool delivered;
+ #if HOLD_NOTES
+     if (s_rec) {
++        if (muse_hatch_ready() && !s_held_count) go_live();
+         bool fed = false, interrupted = false;
+         delivered = false;
+         if (s_live && s_sent == s_rec_n) {
+@@ -779,8 +752,8 @@
+         ESP_LOGE(TAG, "no memory to keep a note");
+     }
+ #endif
+-    if (!ready && !s_rec) {
+-        go_idle(not_ready_reason());
++    if (!s_rec) {
++        go_idle(ready ? "NO RECORDING MEMORY - RETRY" : not_ready_reason());
+         return false;
+     }
+     return true;
+@@ -866,18 +839,16 @@
+         char why[96];
+         bool ok = record(pending_down, &held, why, sizeof(why));
+         pending_down = false;
+-        if (held < MIN_HELD_FRAMES && !wake) {
+-            muse_hatch_turn_cancel();
++        sw_ptt_result_t decision = sw_capture_result();
++        if (!ok || decision != SW_PTT_SEND) {
++            ESP_LOGI(TAG, "PTT discarded: %s", decision == SW_PTT_CANCELLED ? "cancelled" :
++                     !ok ? "capture-failed" : decision == SW_PTT_SHORT ? "short" : "not-released");
+             drop_rec();
+             pre_reset();
+-            go_idle("HOLD LONGER TO TALK");
++            go_idle(!ok ? why : decision == SW_PTT_CANCELLED ? "CANCELLED" : "HOLD MORE THAN 2 SECONDS");
+             continue;
+         }
+-        if (!ok) {
+-            pre_reset();
+-            go_idle(why);   /* Hatch failed it while recording */
+-            continue;
+-        }
++        ESP_LOGI(TAG, "PTT accepted after release");
+         pending_down = finish_note();
+         pre_reset();
+         if (!pending_down && muse_state_mode(NULL) != MUSE_MODE_IDLE) {

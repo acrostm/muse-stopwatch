@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+.DS_Store
+build/
+out/
+firmware/
+.env
+.env.*
+*.bin
+*.elf
+*.map
+*.log
+sdkconfig
+sdkconfig.old
+managed_components/
