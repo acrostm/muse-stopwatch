@@ -1,4 +1,5 @@
 #include "sw_runtime.h"
+#include "sw_proxy.h"
 #include "muse_board.h"
 #include "muse_chat.h"
 #include "muse_link.h"
@@ -113,22 +114,23 @@ void sw_pages_tick(lv_obj_t *tv)
     if (page_index == 1) {
         if (on) lv_label_set_text_fmt(setup_info, "%s\nPassword: %s\nhttp://192.168.4.1\nVoice: %s", name, password,
                                      muse_settings_speaker_on() ? "ON" : "OFF");
-        else lv_label_set_text_fmt(setup_info, "Setup hotspot is off\nVoice: %s\nWi-Fi / SDK token / Doubao\nare configured in your browser",
+        else lv_label_set_text_fmt(setup_info, "Setup hotspot is off\nVoice: %s\nWi-Fi / proxy / SDK / Doubao\nare configured in your browser",
                                   muse_settings_speaker_on() ? "ON" : "OFF");
     }
     if (page_index == 2) {
         muse_wifi_status_t w; muse_wifi_status(&w);
         muse_hatch_status_t m; muse_hatch_status(&m);
         muse_power_t p = muse_state_power();
+        sw_proxy_config_t proxy;sw_proxy_get(&proxy);
         char battery[20];
         if (p.battery_pct < 0) strcpy(battery, "unavailable");
         else snprintf(battery, sizeof(battery), "%d%%", p.battery_pct);
         lv_label_set_text_fmt(status_text,
-            "Muse: %s\n%s\nBLE: %s\nSDK token: %s\nWi-Fi: %s\nRSSI: %d dBm\nIP: %s\nBattery: %s%s\nTTS: %s\nFree RAM: %u KB\nUptime: %llu min",
+            "Muse: %s\n%s\nBLE: %s\nSDK token: %s\nWi-Fi: %s\nRoute: %s\nRSSI: %d dBm\nIP: %s\nBattery: %s%s\nTTS: %s\nFree RAM: %u KB\nUptime: %llu min",
             muse_link_hatch_linked() ? muse_hatch_state_name(m.state) : "Not paired", m.detail,
             muse_link_hatch_linked() && !strcmp(sw_ble_state(),"idle") ? "off after pairing" : sw_ble_state(),
             muse_link_sdk_token() ? "saved" : "missing", w.state == MUSE_WIFI_CONNECTED ? "connected" : "offline",
-            w.rssi, w.ip, battery, p.charging ? " charging" : "", tts,
+            proxy.enabled ? "SOCKS5" : "Direct", w.rssi, w.ip, battery, p.charging ? " charging" : "", tts,
             (unsigned)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024),
             (unsigned long long)(esp_timer_get_time() / 60000000));
     }

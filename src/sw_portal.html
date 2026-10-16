@@ -6,16 +6,17 @@
 </style>
 <h1>Muse · StopWatch</h1><p>连接网络，配对你的 Muse。语音回复由设备直接调用豆包语音合成 2.0。</p>
 <form id="form"><fieldset><legend>Wi-Fi 网络</legend>
-<label for="ssid">网络名称（2.4 GHz）</label><input id="ssid" name="ssid" maxlength="32" autocomplete="off">
+<label for="ssid">网络名称（2.4 GHz，可选择已保存网络）</label><input id="ssid" list="saved-networks" name="ssid" maxlength="32" autocomplete="off">
 <label for="password">Wi-Fi 密码</label><input id="password" name="password" type="password" maxlength="63" autocomplete="new-password">
+<datalist id="saved-networks"></datalist><small>已保存网络的密码留空即可保留，仅修改其代理配置；输入新网络及密码可添加网络。SDK token 和 API 凭据留空也会保留。</small>
 </fieldset><fieldset><legend>Muse</legend>
 <label for="sdk_token">SDK token</label><input id="sdk_token" name="sdk_token" type="password" maxlength="48" autocomplete="new-password" placeholder="mgst_…">
 <p>保存后，在官方 Muse App 的设置 → 设备中开启开发者模式，添加设备，并按设备说话键确认配对。</p>
-</fieldset><fieldset><legend>Muse 网络代理（可选）</legend>
-<label><input id="proxy-enabled" name="proxy_enabled" type="checkbox" style="width:auto"> 使用局域网 SOCKS5／Clash 代理访问 Muse</label>
+</fieldset><fieldset><legend>此 Wi-Fi 的 Muse 网络代理（可选）</legend>
+<label><input id="proxy-enabled" name="proxy_enabled" type="checkbox" style="width:auto"> 此 Wi-Fi 使用 SOCKS5／Clash 代理访问 Muse</label>
 <label for="proxy-host">代理所在设备的局域网 IPv4</label><input id="proxy-host" name="proxy_host" maxlength="15" placeholder="例如 192.168.1.4" autocomplete="off">
 <label for="proxy-port">SOCKS5 或 Clash mixed 端口</label><input id="proxy-port" name="proxy_port" type="number" min="1" max="65535" value="7897">
-<p>仅 Muse 云端流量使用此代理，豆包保持直连。代理须已允许局域网连接且无需认证；正常可直连 Muse 的网络可关闭此项。代理若运行在电脑上，使用时电脑需保持开机。修改代理后设备会重启。</p>
+<p>代理仅绑定上方填写的 Wi-Fi，新网络默认直连。相同 Wi-Fi 可随时关闭、启用或修改地址和端口，其他网络不受影响。关闭代理并清空地址后保存，可删除该网络的代理配置。仅 Muse 云端流量使用此代理，豆包保持直连。代理须已允许局域网连接且无需认证；正常可直连 Muse 的网络可关闭此项。代理若运行在电脑上，使用时电脑需保持开机。当前网络的代理变更会短暂重连，编辑其他网络不影响当前连接。</p>
 </fieldset><fieldset><legend>豆包语音合成 2.0</legend><p id="saved-config" role="status">正在检查已保存配置…</p>
 <label for="api_key">API Key（新版控制台）</label><input id="api_key" name="api_key" type="password" maxlength="256" autocomplete="new-password">
 <details><summary>旧版 App ID + Access Token</summary>
@@ -64,7 +65,22 @@ $('#voice-search').addEventListener('input',renderVoices);
 $('#voice-select').addEventListener('change',e=>{current=e.target.value;renderVoices();});
 $('#use-custom').addEventListener('click',()=>{const id=$('#custom-voice').value.trim();if(!id||id.length>128||/[\x00-\x20\x7f]/.test(id)){ $('#voice-status').textContent='请输入有效的音色 ID';return;}current=id;renderVoices();});
 async function setupSession(){const r=await fetch('/session',{cache:'no-store',signal:AbortSignal.timeout(6000)});if(!r.ok)throw Error('请连接设备配置热点');return r.json();}
-setupSession().then(s=>{$('#saved-config').textContent=`设备已保存：TTS 凭据${s.tts_configured?'已配置':'未配置'}；Muse SDK token ${s.sdk_configured?'已配置':'未配置'}。`;$('#proxy-enabled').checked=!!s.proxy_enabled;$('#proxy-host').value=s.proxy_host||'';$('#proxy-port').value=s.proxy_port||7897;if(s.speaker){current=s.speaker;renderVoices();}}).catch(e=>{$('#voice-status').textContent=e.message;});
+let networkProfiles=[],configuredSSID='';
+function selectNetworkProxy(){
+ const ssid=$('#ssid').value||configuredSSID,p=networkProfiles.find(p=>p.ssid===ssid);
+ $('#proxy-enabled').checked=!!p?.enabled;$('#proxy-host').value=p?.host||'';$('#proxy-port').value=p?.port||7897;
+}
+$('#ssid').addEventListener('input',selectNetworkProxy);
+const settingsReady=setupSession().then(s=>{
+ $('#saved-config').textContent=`设备已保存：TTS 凭据${s.tts_configured?'已配置':'未配置'}；Muse SDK token ${s.sdk_configured?'已配置':'未配置'}。`;
+ if(typeof s.wifi_ssid!=='string'||!Array.isArray(s.proxy_profiles)||!Array.isArray(s.wifi_saved))throw Error('网络配置不完整，请刷新页面');
+ configuredSSID=s.wifi_ssid;networkProfiles=s.proxy_profiles;
+ $('#ssid').value=configuredSSID;
+ for(const name of new Set([configuredSSID,...s.wifi_saved,...networkProfiles.map(p=>p.ssid)])){if(!name)continue;const o=document.createElement('option');o.value=name;$('#saved-networks').append(o);}
+ selectNetworkProxy();if(s.speaker){current=s.speaker;renderVoices();}
+ return true;
+}).catch(e=>{$('#voice-status').textContent=e.message;return false;});
+
 function setBusy(on){busy=on;for(const s of ['#preview','#refresh-voices','#more-voices','#save'])$(s).disabled=on;}
 async function voiceJob(path,data){
  const {csrf}=await setupSession(),headers={'Content-Type':'application/json','X-Setup-Token':csrf};
@@ -119,9 +135,10 @@ $('#preview').addEventListener('click',async()=>{
 window.addEventListener('pagehide',()=>{if(objectUrl)URL.revokeObjectURL(objectUrl);});
 const form=document.querySelector('#form'),result=document.querySelector('#result'),button=document.querySelector('#save');
 form.addEventListener('submit',async e=>{e.preventDefault();if(busy)return;button.disabled=true;result.textContent='正在保存…';try{
+if(!await settingsReady)throw Error('配置未加载，请刷新页面后重试');
 const {csrf}=await setupSession();
 const data=Object.fromEntries(new FormData(form));data.proxy_enabled=$('#proxy-enabled').checked;const response=await fetch('/config',{method:'POST',headers:{'Content-Type':'application/json','X-Setup-Token':csrf},body:JSON.stringify(data)});
 const saved=await response.json();if(!response.ok)throw Error(saved.error||'保存失败');
-form.reset();renderVoices();result.textContent='配置已提交。热点即将关闭，请观察设备状态。随后在官方 Muse App 中完成配对。';
+form.reset();renderVoices();result.textContent='配置已提交。热点即将关闭，请观察设备状态。已配对的设备无需重新配对。';
 }catch(error){result.textContent=error.message+'；可重新提交。'}finally{button.disabled=false;}});
 </script></html>

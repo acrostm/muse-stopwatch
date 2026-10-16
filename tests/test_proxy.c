@@ -29,11 +29,22 @@ int main(void)
     assert(!sw_proxy_lan_ipv4("127.0.0.1"));assert(!sw_proxy_lan_ipv4("172.32.0.1"));assert(!sw_proxy_lan_ipv4("192.168.1.256"));assert(!sw_proxy_lan_ipv4("192.168.1.1x"));
     unsigned char buf[300];assert(sw_socks_request("api.muse.ai",443,buf,sizeof(buf))==18);
     assert(!sw_socks_request("api.muse.ai\r\n",443,buf,sizeof(buf)));assert(!sw_socks_request("api.muse.ai",443,buf,4));
+    sw_proxy_config_t legacy={.host="192.168.1.4",.port=7897,.enabled=true};
+    memcpy(legacy_blob,&legacy,sizeof(legacy));legacy_size=sizeof(legacy);
     assert(sw_proxy_init()==ESP_OK);
+    sw_proxy_config_t migrated;sw_proxy_get(&migrated);assert(migrated.enabled && migrated.port==7897);
+    assert(profiles_size==sizeof(sw_proxy_profiles_t));
+    strcpy(test_ssid,"phone");sw_proxy_get(&migrated);assert(!migrated.enabled);
+    strcpy(test_ssid,"home");legacy.enabled=false;assert(sw_proxy_save_for("home",&legacy)==ESP_OK);
+    pthread_mutex_destroy(lock);free(lock);profiles=(sw_proxy_profiles_t){0};
+    assert(sw_proxy_init()==ESP_OK);sw_proxy_get(&migrated);assert(!migrated.enabled); /* Old enabled v1 cannot resurrect. */
     listener=socket(AF_INET,SOCK_STREAM,0);assert(listener>=0);
     struct sockaddr_in addr={.sin_family=AF_INET,.sin_addr.s_addr=htonl(0x7f000001)};
     assert(!bind(listener,(void *)&addr,sizeof(addr)));assert(!listen(listener,2));socklen_t size=sizeof(addr);assert(!getsockname(listener,(void *)&addr,&size));
-    config.enabled=true;strcpy(config.host,"127.0.0.1");config.port=ntohs(addr.sin_port);
+    /* Loopback is injected only into the harness; production setters forbid it. */
+    strcpy(profiles.entries[0].ssid,"home");
+    profiles.entries[0].proxy=(sw_proxy_config_t){.enabled=true,.port=ntohs(addr.sin_port)};
+    strcpy(profiles.entries[0].proxy.host,"127.0.0.1");
     struct addrinfo hint={.ai_family=AF_UNSPEC,.ai_socktype=SOCK_STREAM},*out;
     assert(!__wrap_lwip_getaddrinfo("api.muse.ai","443",&hint,&out));assert(out->ai_family==AF_INET);
     assert(ntohl(((struct sockaddr_in *)out->ai_addr)->sin_addr.s_addr)==0xc613ff01);
@@ -44,6 +55,13 @@ int main(void)
         if(reject_auth) assert(rc==-1&&errno==EACCES);else assert(rc==0);
         assert(fcntl(fd,F_GETFL,0)&O_NONBLOCK);close(fd);pthread_join(thread,NULL);
     }
+    /* A cached synthetic destination must not carry the home proxy to a hotspot. */
+    strcpy(test_ssid,"phone");
+    sw_proxy_config_t selected;sw_proxy_get(&selected);assert(!selected.enabled);
+    int stale=socket(AF_INET,SOCK_STREAM,0);assert(stale>=0);
+    assert(__wrap_lwip_connect(stale,out->ai_addr,out->ai_addrlen)==-1 && errno==EHOSTUNREACH);
+    close(stale);
+    strcpy(test_ssid,"home");sw_proxy_get(&selected);assert(selected.enabled);
     freeaddrinfo(out);close(listener);
     for(unsigned i=1;i<SLOTS;++i) { char h[48];snprintf(h,sizeof(h),"node%u.muse.ai",i);assert(!__wrap_lwip_getaddrinfo(h,"443",&hint,&out));freeaddrinfo(out); }
     assert(__wrap_lwip_getaddrinfo("overflow.muse.ai","443",&hint,&out)==EAI_MEMORY);

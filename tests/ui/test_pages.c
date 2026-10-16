@@ -1,9 +1,11 @@
 #include "sw_runtime.h"
+#include "sw_proxy.h"
 #include "ui_stubs.h"
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
 
+void sw_proxy_get(sw_proxy_config_t *out) { *out=(sw_proxy_config_t){0}; }
 void muse_state_poke(void) {}
 bool muse_settings_speaker_on(void) { return true; }
 void muse_settings_set_speaker_on(bool on) { (void)on; }

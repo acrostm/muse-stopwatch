@@ -6,6 +6,7 @@
 #include "esp_system.h"
 #include "muse_link.h"
 #include "muse_settings.h"
+#include "muse_wifi.h"
 #include "muse_state.h"
 #include "cJSON.h"
 #include "esp_http_server.h"
@@ -26,7 +27,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-typedef struct { sw_config_t tts; sw_proxy_config_t proxy; char ssid[33], pass[65], sdk[49]; } update_t;
+typedef struct { sw_config_t tts; sw_proxy_config_t proxy; char ssid[33], pass[65], sdk[49]; bool wifi_update; } update_t;
 static QueueHandle_t updates;
 static SemaphoreHandle_t info_lock;
 static atomic_bool requested, pairing_requested;
@@ -91,7 +92,25 @@ static esp_err_t session(httpd_req_t *r)
     cJSON_AddBoolToObject(body, "sdk_configured", muse_link_sdk_token() != NULL);
     cJSON_AddStringToObject(body, "bluetooth", sw_ble_state());
     cJSON_AddBoolToObject(body, "paired", muse_link_hatch_linked());
-    sw_proxy_config_t proxy; sw_proxy_get(&proxy);
+    char wifi_ssid[33], wifi_pass[65]; muse_settings_wifi(wifi_ssid, wifi_pass); memset(wifi_pass,0,sizeof(wifi_pass));
+    wifi_ap_record_t current_ap;
+    if (esp_wifi_sta_get_ap_info(&current_ap)==ESP_OK) { memcpy(wifi_ssid,current_ap.ssid,32);wifi_ssid[32]=0; }
+    cJSON_AddStringToObject(body, "wifi_ssid", wifi_ssid);
+    muse_wifi_saved_t saved[MUSE_WIFI_SAVED_MAX];
+    int saved_count=muse_wifi_saved(saved,MUSE_WIFI_SAVED_MAX);
+    cJSON *networks=cJSON_AddArrayToObject(body,"wifi_saved");
+    for(int i=0;i<saved_count;++i) cJSON_AddItemToArray(networks,cJSON_CreateString(saved[i].ssid));
+    sw_proxy_profiles_t profiles; sw_proxy_snapshot(&profiles);
+    cJSON *list = cJSON_AddArrayToObject(body, "proxy_profiles");
+    for (unsigned i=0; i<SW_PROXY_PROFILES_MAX; ++i) if (profiles.entries[i].ssid[0]) {
+        cJSON *item = cJSON_CreateObject();
+        cJSON_AddStringToObject(item,"ssid",profiles.entries[i].ssid);
+        cJSON_AddBoolToObject(item,"enabled",profiles.entries[i].proxy.enabled);
+        cJSON_AddStringToObject(item,"host",profiles.entries[i].proxy.host);
+        cJSON_AddNumberToObject(item,"port",profiles.entries[i].proxy.port);
+        cJSON_AddItemToArray(list,item);
+    }
+    sw_proxy_config_t proxy; sw_proxy_get_for(wifi_ssid,&proxy);
     cJSON_AddBoolToObject(body, "proxy_enabled", proxy.enabled);
     cJSON_AddStringToObject(body, "proxy_host", proxy.host);
     cJSON_AddNumberToObject(body, "proxy_port", proxy.port ? proxy.port : 7897);
@@ -154,8 +173,14 @@ static esp_err_t save(httpd_req_t *r)
     cJSON *root = cJSON_ParseWithLengthOpts(buf, got + 1, &end, true);
     update_t update = {0};
     sw_config_get(&update.tts);
-    sw_proxy_get(&update.proxy);
-    bool ok = cJSON_IsObject(root) && proxy_fields(root, &update.proxy) && field(root, "ssid", update.ssid, sizeof(update.ssid)) &&
+    char current_ssid[33], current_pass[65];
+    muse_settings_wifi(current_ssid,current_pass); memset(current_pass,0,sizeof(current_pass));
+    wifi_ap_record_t active_ap;
+    if(esp_wifi_sta_get_ap_info(&active_ap)==ESP_OK){memcpy(current_ssid,active_ap.ssid,32);current_ssid[32]=0;}
+    bool ssid_ok = cJSON_IsObject(root) && field(root,"ssid",update.ssid,sizeof(update.ssid));
+    if (!update.ssid[0]) strcpy(update.ssid,current_ssid);
+    sw_proxy_get_for(update.ssid,&update.proxy);
+    bool ok = ssid_ok && update.ssid[0] && proxy_fields(root, &update.proxy) &&
         field(root, "password", update.pass, sizeof(update.pass)) &&
         field(root, "sdk_token", update.sdk, sizeof(update.sdk)) &&
         field(root, "api_key", update.tts.api_key, sizeof(update.tts.api_key)) &&
@@ -165,6 +190,15 @@ static esp_err_t save(httpd_req_t *r)
         sw_header_safe(update.tts.api_key, 256) && sw_header_safe(update.tts.access_key, 256) &&
         sw_header_safe(update.tts.app_id, 64) && sw_header_safe(update.tts.speaker, 128) &&
         (!update.pass[0] || (strlen(update.pass) >= 8 && strlen(update.pass) <= 63));
+    if (ok) {
+        bool known = !strcmp(update.ssid,current_ssid);
+        muse_wifi_saved_t saved[MUSE_WIFI_SAVED_MAX];
+        int count = muse_wifi_saved(saved,MUSE_WIFI_SAVED_MAX);
+        for (int i=0;i<count;++i) if (!strcmp(saved[i].ssid,update.ssid)) known=true;
+        update.wifi_update = update.pass[0] || !known;
+        sw_proxy_profiles_t candidate; sw_proxy_snapshot(&candidate);
+        ok = sw_proxy_profile_set(&candidate,update.ssid,&update.proxy);
+    }
     cJSON_Delete(root);
     memset(buf, 0, got); free(buf);
     esp_err_t result;
@@ -301,15 +335,17 @@ static void worker(void *arg)
         update_t u;
         if (xQueueReceive(updates, &u, pdMS_TO_TICKS(200)) == pdTRUE) {
             vTaskDelay(pdMS_TO_TICKS(500)); /* let the HTTP response leave */
-            sw_proxy_config_t old_proxy; sw_proxy_get(&old_proxy);
-            bool proxy_changed = old_proxy.enabled != u.proxy.enabled || old_proxy.port != u.proxy.port || strcmp(old_proxy.host,u.proxy.host);
+            sw_proxy_config_t old_proxy; sw_proxy_get_for(u.ssid,&old_proxy);
+            wifi_ap_record_t active_ap; char active_ssid[33]={0};
+            if(esp_wifi_sta_get_ap_info(&active_ap)==ESP_OK){memcpy(active_ssid,active_ap.ssid,32);active_ssid[32]=0;}
+            bool restart = sw_proxy_restart_needed(&old_proxy,&u.proxy,!strcmp(active_ssid,u.ssid),u.wifi_update);
             esp_err_t err = sw_config_save(&u.tts);
-            if (err == ESP_OK && proxy_changed) err = sw_proxy_save(&u.proxy);
+            if (err == ESP_OK) err = sw_proxy_save_for(u.ssid,&u.proxy);
             if (err == ESP_OK) {
-                if (u.ssid[0]) muse_settings_set_wifi(u.ssid, u.pass);
+                if (u.wifi_update) muse_settings_set_wifi(u.ssid,u.pass);
                 close_portal();
                 if (u.sdk[0] && !muse_link_sdk_token_set(u.sdk)) sw_tts_set_status("SDK token save failed");
-                else if (proxy_changed) esp_restart();
+                else if (restart) esp_restart();
                 else {
                     sw_config_t current; sw_config_get(&current);
                     sw_tts_set_status(sw_config_ready(&current) ? "Ready (not tested)" : "Not configured");
