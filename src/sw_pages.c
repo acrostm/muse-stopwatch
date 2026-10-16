@@ -26,6 +26,7 @@ static unsigned page_index;
 LV_FONT_DECLARE(muse_font_cjk_16);
 
 void sw_pages_next(void) { atomic_fetch_add(&next_page, 1); }
+unsigned sw_pages_current(void) { return page_index; }
 
 static lv_obj_t *label(lv_obj_t *parent, const char *text, int y)
 {
@@ -52,11 +53,14 @@ static lv_obj_t *button(lv_obj_t *parent, const char *text, int y, lv_event_cb_t
     return b;
 }
 
-void sw_pages_build(lv_obj_t *tv, lv_obj_t *settings)
+void sw_pages_build(lv_obj_t *tv, lv_obj_t *face, lv_obj_t *settings)
 {
     text_font = lv_font_montserrat_16;
     text_font.fallback = &muse_font_cjk_16;
-    tiles[0] = lv_tileview_get_tile_active(tv);
+    /* LVGL leaves tile_act NULL until an explicit selection/scroll event. */
+    tiles[0] = face;
+    page_index = 0;
+    lv_tileview_set_tile(tv, face, LV_ANIM_OFF);
     tiles[1] = settings;
     tiles[2] = lv_tileview_add_tile(tv, 2, 0, LV_DIR_HOR);
     tiles[3] = lv_tileview_add_tile(tv, 3, 0, LV_DIR_LEFT);

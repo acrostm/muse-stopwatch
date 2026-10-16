@@ -8,7 +8,7 @@
 
 `sw_runtime` owns configuration/history synchronization. `sw_portal` serves the hotspot UI and queues network/storage operations. `sw_voice` implements voice discovery and bounded preview; `sw_tts` handles provider stream framing, PCM and generation-based cancellation. `sw_proxy_core` builds bounded SOCKS5 requests; `sw_proxy` supplies domain-scoped DNS/connect wrappers. `sw_pages` owns LVGL widgets in the UI task. Upstream continues to own the board, microphone, codecs, avatar, Muse pairing and cloud session.
 
-Host harnesses exercise real C implementations with ASan/UBSan, including exhaustive duration boundaries, UTF-8/history bounds, fragmented provider streams, cancellation, signing against a Python HMAC oracle, fragmented SOCKS5 sockets and artifact tamper detection. SDK integration and board peripherals need the firmware job and hardware checks; host stubs cannot prove those.
+Host harnesses exercise real C implementations with ASan/UBSan, including exhaustive duration boundaries, UTF-8/history bounds, fragmented provider streams, cancellation, signing against a Python HMAC oracle, fragmented SOCKS5 sockets and artifact tamper detection. The firmware job also runs `tools/test_ui.py` against the SDK's actual LVGL source under ASan/UBSan. It exercises a tileview whose active tile starts NULL, explicit home initialization, rendering, twenty page advances, a swipe, and coalesced navigation requests. Platform-only calls are stubbed and the font fixture uses Montserrat, so this does not prove physical controls, CJK glyph coverage, or board peripherals. Those still require hardware checks.
 
 ## Hardware checklist
 
