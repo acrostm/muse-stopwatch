@@ -14,6 +14,8 @@
 #include "lwip/netdb.h"
 #include "lwip/sockets.h"
 #include "nvs.h"
+#include "esp_wifi.h"
+#include "muse_settings.h"
 #include <errno.h>
 #include <sys/select.h>
 #include <fcntl.h>
@@ -22,71 +24,117 @@
 
 #define SLOTS 16
 static SemaphoreHandle_t lock;
-static sw_proxy_config_t config, pending;
+static sw_proxy_profiles_t profiles;
+static sw_proxy_config_t pending;
+static char pending_ssid[33];
 static bool requested;
-static EXT_RAM_BSS_ATTR char names[SLOTS][254];
+static EXT_RAM_BSS_ATTR char names[SLOTS][254], name_ssids[SLOTS][33];
 extern int __real_lwip_getaddrinfo(const char *, const char *, const struct addrinfo *, struct addrinfo **);
 extern int __real_lwip_connect(int, const struct sockaddr *, socklen_t);
 
+static bool active_ssid(char out[33])
+{
+    wifi_ap_record_t ap;
+    out[0] = 0;
+    if (esp_wifi_sta_get_ap_info(&ap) != ESP_OK) return false;
+    memcpy(out, ap.ssid, 32); out[32] = 0;
+    return out[0] != 0;
+}
+static void preferred_ssid(char out[33])
+{
+    char pass[65]; muse_settings_wifi(out, pass); memset(pass, 0, sizeof(pass));
+}
+void sw_proxy_get_for(const char *ssid, sw_proxy_config_t *out)
+{
+    memset(out, 0, sizeof(*out));
+    if (!lock) return;
+    xSemaphoreTake(lock, portMAX_DELAY);
+    sw_proxy_profile_get(&profiles, ssid, out);
+    xSemaphoreGive(lock);
+}
+void sw_proxy_snapshot(sw_proxy_profiles_t *out)
+{
+    xSemaphoreTake(lock, portMAX_DELAY); *out = profiles; xSemaphoreGive(lock);
+}
 void sw_proxy_get(sw_proxy_config_t *out)
 {
-    memset(out,0,sizeof(*out));
-    if (!lock) return;
-    xSemaphoreTake(lock,portMAX_DELAY);*out=config;xSemaphoreGive(lock);
+    char ssid[33];
+    if (!active_ssid(ssid)) { memset(out, 0, sizeof(*out)); return; }
+    sw_proxy_get_for(ssid, out);
 }
-esp_err_t sw_proxy_save(const sw_proxy_config_t *c)
+esp_err_t sw_proxy_save_for(const char *ssid, const sw_proxy_config_t *c)
 {
-    if (c->enabled && (!sw_proxy_lan_ipv4(c->host)||!c->port)) return ESP_ERR_INVALID_ARG;
+    sw_proxy_profiles_t next;
+    xSemaphoreTake(lock, portMAX_DELAY);
+    next = profiles;
+    if (!sw_proxy_profile_set(&next, ssid, c)) { xSemaphoreGive(lock); return ESP_ERR_INVALID_ARG; }
     nvs_handle_t nvs;
-    esp_err_t err=nvs_open("sw_net",NVS_READWRITE,&nvs);
-    if (err==ESP_OK) {
-        err=nvs_set_blob(nvs,"proxy_v1",c,sizeof(*c));
-        if (err==ESP_OK) err=nvs_commit(nvs);
+    esp_err_t err = nvs_open("sw_net", NVS_READWRITE, &nvs);
+    if (err == ESP_OK) {
+        err = nvs_set_blob(nvs, "profiles_v2", &next, sizeof(next));
+        if (err == ESP_OK) err = nvs_commit(nvs);
         nvs_close(nvs);
     }
-    if (err==ESP_OK) { xSemaphoreTake(lock,portMAX_DELAY);config=*c;xSemaphoreGive(lock); }
+    if (err == ESP_OK) profiles = next;
+    xSemaphoreGive(lock);
     return err;
 }
 esp_err_t sw_proxy_init(void)
 {
-    lock=xSemaphoreCreateMutex();if (!lock) return ESP_ERR_NO_MEM;
+    lock = xSemaphoreCreateMutex(); if (!lock) return ESP_ERR_NO_MEM;
     nvs_handle_t nvs;
-    if (nvs_open("sw_net",NVS_READONLY,&nvs)==ESP_OK) {
-        sw_proxy_config_t saved={0};size_t size=sizeof(saved);
-        if (nvs_get_blob(nvs,"proxy_v1",&saved,&size)==ESP_OK&&size==sizeof(saved)) {
-            saved.host[15]=0;
-            if (!saved.enabled||(sw_proxy_lan_ipv4(saved.host)&&saved.port)) config=saved;
-        }
+    if (nvs_open("sw_net", NVS_READONLY, &nvs) != ESP_OK) return ESP_OK;
+    sw_proxy_profiles_t saved = {0}; size_t size = sizeof(saved);
+    esp_err_t err = nvs_get_blob(nvs, "profiles_v2", &saved, &size);
+    if (err == ESP_OK) {
         nvs_close(nvs);
+        if (size != sizeof(saved) || !sw_proxy_profiles_valid(&saved)) { ESP_LOGW("sw_proxy","invalid profiles; configure in setup");return ESP_OK; }
+        profiles = saved; return ESP_OK;
     }
+    /* Only migrate when v2 is absent. Never resurrect a disabled old proxy. */
+    if (err != ESP_ERR_NVS_NOT_FOUND) { nvs_close(nvs); return err; }
+    sw_proxy_config_t legacy = {0}; size = sizeof(legacy);
+    err = nvs_get_blob(nvs, "proxy_v1", &legacy, &size);
+    nvs_close(nvs);
+    if (err == ESP_ERR_NVS_NOT_FOUND) return ESP_OK;
+    if (err != ESP_OK) return err;
+    if (size != sizeof(legacy) || !memchr(legacy.host, 0, sizeof(legacy.host))) { ESP_LOGW("sw_proxy","invalid legacy proxy; configure in setup");return ESP_OK; }
+    char ssid[33]; preferred_ssid(ssid);
+    if (legacy.enabled && !ssid[0]) { ESP_LOGW("sw_proxy","legacy proxy needs a Wi-Fi profile; configure in setup");return ESP_OK; }
+    if (ssid[0]) return sw_proxy_save_for(ssid, &legacy);
     return ESP_OK;
 }
-bool sw_proxy_request(const char *host,uint16_t port)
+bool sw_proxy_request(const char *host, uint16_t port)
 {
-    if (!host||strlen(host)>=sizeof(pending.host)||(*host&&(!sw_proxy_lan_ipv4(host)||!port))) return false;
-    xSemaphoreTake(lock,portMAX_DELAY);
-    memset(&pending,0,sizeof(pending));strcpy(pending.host,host);pending.port=port;pending.enabled=*host!=0;requested=true;
-    xSemaphoreGive(lock);return true;
+    char ssid[33]; if (!active_ssid(ssid)) preferred_ssid(ssid);
+    if (!ssid[0] || !host || strlen(host) >= sizeof(pending.host) || (*host && (!sw_proxy_lan_ipv4(host) || !port))) return false;
+    xSemaphoreTake(lock, portMAX_DELAY);
+    memset(&pending, 0, sizeof(pending)); strcpy(pending.host, host);
+    strcpy(pending_ssid, ssid); pending.port = port; pending.enabled = *host != 0; requested = true;
+    xSemaphoreGive(lock); return true;
 }
 void sw_proxy_tick(void)
 {
-    sw_proxy_config_t c;bool apply;
-    xSemaphoreTake(lock,portMAX_DELAY);apply=requested;c=pending;requested=false;xSemaphoreGive(lock);
+    sw_proxy_config_t c; char ssid[33]; bool apply;
+    xSemaphoreTake(lock, portMAX_DELAY); apply = requested; c = pending;
+    strcpy(ssid, pending_ssid); requested = false; xSemaphoreGive(lock);
     if (!apply) return;
-    esp_err_t err=sw_proxy_save(&c);
-    ESP_LOGI("sw_proxy","configuration %s",err==ESP_OK?"saved; restarting":"save failed");
-    if (err==ESP_OK) { vTaskDelay(pdMS_TO_TICKS(300));esp_restart(); }
+    esp_err_t err = sw_proxy_save_for(ssid, &c);
+    ESP_LOGI("sw_proxy", "network profile %s", err == ESP_OK ? "saved; restarting" : "save failed");
+    if (err == ESP_OK) { vTaskDelay(pdMS_TO_TICKS(300)); esp_restart(); }
 }
 
 int __wrap_lwip_getaddrinfo(const char *host,const char *service,const struct addrinfo *hint,struct addrinfo **out)
 {
-    sw_proxy_config_t c;sw_proxy_get(&c);
+    if (!sw_proxy_target(host)) return __real_lwip_getaddrinfo(host,service,hint,out);
+    char ssid[33]; active_ssid(ssid);
+    sw_proxy_config_t c;sw_proxy_get_for(ssid,&c);
     if (!c.enabled||!sw_proxy_target(host)) return __real_lwip_getaddrinfo(host,service,hint,out);
     if (strlen(host)>=sizeof(names[0])) return EAI_NONAME;
     int index=-1;
     xSemaphoreTake(lock,portMAX_DELAY);
-    for (unsigned i=0;i<SLOTS;++i) if (!strcmp(names[i],host)) { index=i;break; }
-    if (index<0) for (unsigned i=0;i<SLOTS;++i) if (!names[i][0]) { strcpy(names[i],host);index=i;break; }
+    for (unsigned i=0;i<SLOTS;++i) if (!strcmp(names[i],host) && !strcmp(name_ssids[i],ssid)) { index=i;break; }
+    if (index<0) for (unsigned i=0;i<SLOTS;++i) if (!names[i][0]) { strcpy(names[i],host);strcpy(name_ssids[i],ssid);index=i;break; }
     xSemaphoreGive(lock);
     if (index<0) return EAI_MEMORY;
     char ip[20];snprintf(ip,sizeof(ip),"198.19.255.%u",(unsigned)index+1);
@@ -128,7 +176,8 @@ int __wrap_lwip_connect(int fd,const struct sockaddr *address,socklen_t size)
     unsigned index=(ip&255)-1;
     char host[254]={0};sw_proxy_config_t c;sw_proxy_get(&c);
     if (index<SLOTS&&lock) { xSemaphoreTake(lock,portMAX_DELAY);strcpy(host,names[index]);xSemaphoreGive(lock); }
-    if (!c.enabled||!host[0]) { errno=EHOSTUNREACH;return -1; }
+    char ssid[33];
+    if (!c.enabled || !host[0] || !active_ssid(ssid) || strcmp(ssid,name_ssids[index])) { errno=EHOSTUNREACH;return -1; }
     struct sockaddr_in proxy={.sin_family=AF_INET,.sin_port=htons(c.port)};
     if (inet_pton(AF_INET,c.host,&proxy.sin_addr)!=1) { errno=EINVAL;return -1; }
     int flags=fcntl(fd,F_GETFL,0);

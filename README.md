@@ -17,7 +17,7 @@ This repository contains the adaptation and a patch against one pinned SDK revis
 - Accepted notes may wait in RAM for connectivity (up to four, bounded retries); a reboot loses them. Delivery retries can duplicate a note if its acknowledgement was lost.
 - Wi-Fi setup hotspot with a persistent, per-device eight-digit PIN. Credentials stay on the device; saved secrets are never returned to the browser.
 - Doubao named voice search, browser preview, and optional official ListSpeakers refresh. Voice availability depends on your account. Preview makes a billable provider request.
-- Optional LAN SOCKS5/Clash routing for Muse cloud domains; Doubao traffic remains direct. TLS still verifies the original destination.
+- Per-Wi-Fi SOCKS5/Clash profiles for Muse cloud domains; new networks default to direct. The portal can enable/disable a proxy or edit its address/port for any selected network. Doubao stays direct, and TLS verifies the original destination.
 
 ## Screens
 
@@ -47,7 +47,7 @@ Phone Bluetooth ↔ StopWatch: discovery and initial pairing
 6. Add the device from the official Muse app and confirm pairing with the blue talk button. If already paired, do not repeatedly scan: check the device Status page for the cloud link instead.
 7. Hold blue, speak for more than two seconds, and release. Press yellow while holding blue to discard and retry.
 
-If needed, enable the optional proxy in the portal with the LAN IPv4 and SOCKS5/mixed port of your Clash instance. It must allow LAN clients without authentication. This adapter deliberately accepts only private LAN IPv4 proxy addresses; restrict access on the proxy host. The setup portal is HTTP on the device hotspot, not a remotely exposed management service.
+Select the Wi-Fi name in the portal before editing its proxy switch, LAN IPv4, and SOCKS5/mixed port. Existing Wi-Fi passwords, SDK tokens, and TTS keys are retained when left blank. A blank password for an already saved Wi-Fi edits its proxy without forcing a network switch. New networks default to direct; reconnecting to an existing SSID restores that network's profile. Use distinct SSIDs for your home network and phone hotspot. Disabling a proxy retains its address for re-enabling; disabling and clearing the address removes the profile. Up to eight proxy profiles are stored; full tables reject new proxy entries without evicting existing settings. Upgrades migrate the old global proxy to the previously configured SSID; old firmware does not understand these profiles. The device Status page shows Direct or SOCKS5. Changing the active route alone restarts the device so cloud sockets use the new route; editing an inactive network does not interrupt the current link. When Wi-Fi credentials also change, the SDK saves them before reconnecting, rather than being interrupted by a proxy-triggered restart. The proxy must allow LAN clients without authentication. This adapter deliberately accepts only private LAN IPv4 proxy addresses; restrict access on the proxy host. The setup portal is HTTP on the device hotspot, not a remotely exposed management service.
 
 ## Build from source
 
